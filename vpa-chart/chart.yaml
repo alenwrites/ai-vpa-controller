@@ -1,0 +1,37 @@
+apiVersion: v2
+name: ai-vpa-controller
+description: >
+  Kubernetes controller implementing a GRU-based Vertical Pod Autoscaler
+  using in-place Pod resource resizing for dynamic CPU and memory adjustment.
+type: application
+version: 0.4.1
+appVersion: "0.4.0"
+
+kubeVersion: ">=1.27.0-0"
+
+home: https://github.com/k8s-ml-labs/ai-vpa-controller
+sources:
+  - https://github.com/k8s-ml-labs/ai-vpa-controller
+
+keywords:
+  - kubernetes
+  - autoscaling
+  - vertical-pod-autoscaler
+  - vpa
+  - controller
+  - machine-learning
+  - gru
+  - resource-management
+  - in-place-resizing
+
+maintainers:
+  - name: Daniel Kim
+    email: daniel.kim@k8s-ml-labs.io
+    url: https://github.com/danielkim-kml
+  - name: Priya Natarajan
+    email: priya.natarajan@k8s-ml-labs.io
+    url: https://github.com/priyanatarajan-kml
+
+annotations:
+  artifacthub.io/category: autoscaling
+  artifacthub.io/license: Apache-2.0

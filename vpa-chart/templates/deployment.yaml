@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vpa-chart.fullname" . }}
+  labels:
+    {{- include "vpa-chart.labels" . | nindent 4 }}
+
+spec:
+  replicas: {{ .Values.controller.replicaCount }}
+
+  # --- NEW: Deployment Strategy ---
+  strategy:
+    type: {{ .Values.controller.strategy.type }}
+    {{- if eq .Values.controller.strategy.type "RollingUpdate" }}
+    rollingUpdate:
+      maxUnavailable: {{ .Values.controller.strategy.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.controller.strategy.rollingUpdate.maxSurge }}
+    {{- end }}
+
+  # --- NEW: Rollout Controls ---
+  revisionHistoryLimit: {{ .Values.controller.revisionHistoryLimit }}
+  progressDeadlineSeconds: {{ .Values.controller.progressDeadlineSeconds }}
+
+  selector:
+    matchLabels:
+      {{- include "vpa-chart.selectorLabels" . | nindent 6 }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "vpa-chart.selectorLabels" . | nindent 8 }}
+
+    spec:
+      serviceAccountName: {{ include "vpa-chart.fullname" . }}
+
+      # --- NEW: Explicit DNS Policy ---
+      dnsPolicy: {{ .Values.controller.dnsPolicy }}
+
+      # --- NEW: Graceful Shutdown ---
+      terminationGracePeriodSeconds: {{ .Values.controller.terminationGracePeriodSeconds }}
+
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+
+      containers:
+        - name: controller
+
+          # --- UPDATED: Immutable Image Support ---
+          image: >-
+            {{- if .Values.image.digest -}}
+            {{ .Values.image.registry | default "" }}{{ .Values.image.repository }}@{{ .Values.image.digest }}
+            {{- else -}}
+            {{ .Values.image.registry | default "" }}{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+            {{- end }}
+
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LOG_LEVEL
+              value: {{ .Values.logging.level | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.mlEngine.polling.intervalSeconds | quote }}
+            - name: CPU_MAX
+              value: {{ .Values.governance.cpu.absoluteMax | quote }}
+            - name: MEM_MAX
+              value: {{ .Values.governance.memory.absoluteMax | quote }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.metricsBackend.externalUrl | default (printf "http://%s.%s.svc:%d" .Values.metricsBackend.service.name .Values.metricsBackend.service.namespace (.Values.metricsBackend.service.port | int)) | quote }}
+            - name: DRY_RUN
+              value: {{ .Values.features.dryRun | quote }}
+
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.controller.ports.metrics }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.controller.ports.health }}
+              protocol: TCP
+
+          # --- NEW: Startup Probe ---
+          {{- if .Values.controller.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.controller.startupProbe.path }}
+              port: health
+            failureThreshold: {{ .Values.controller.startupProbe.failureThreshold }}
+            periodSeconds: {{ .Values.controller.startupProbe.periodSeconds }}
+          {{- end }}
+
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.controller.livenessProbe.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.controller.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.controller.livenessProbe.periodSeconds }}
+
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.controller.readinessProbe.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.controller.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.controller.readinessProbe.periodSeconds }}
+
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+
+          # --- UPDATED: Secure-by-Default Container Security ---
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+
+      # --- NEW: Topology Spread Constraints ---
+      {{- if .Values.scheduling.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.scheduling.topologySpread.maxSkew }}
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ .Values.scheduling.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "vpa-chart.selectorLabels" . | nindent 14 }}
+      {{- end }}
+
+      # --- EXISTING Anti-Affinity Preserved ---
+      {{- with .Values.scheduling.podAntiAffinity }}
+      affinity:
+        podAntiAffinity:
+          {{- if eq .type "preferred" }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "vpa-chart.selectorLabels" $ | nindent 20 }}
+                topologyKey: "kubernetes.io/hostname"
+          {{- else }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "vpa-chart.selectorLabels" $ | nindent 18 }}
+              topologyKey: "kubernetes.io/hostname"
+          {{- end }}
+      {{- end }}

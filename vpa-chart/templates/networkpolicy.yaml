@@ -1,0 +1,68 @@
+{{- if .Values.networkPolicy.enabled }}
+
+{{- /* health.exposure enum validation */}}
+{{- if not (or
+      (eq .Values.health.exposure "same-namespace")
+      (eq .Values.health.exposure "kube-system")
+      (eq .Values.health.exposure "custom")) }}
+{{- fail "health.exposure must be one of: same-namespace | kube-system | custom" }}
+{{- end }}
+
+{{- if and (eq .Values.health.exposure "custom") (empty .Values.health.allowedNamespaces) }}
+{{- fail "health.allowedNamespaces must be set when health.exposure=custom" }}
+{{- end }}
+
+{{- /* metrics namespace logic */}}
+{{- $metricsNamespaces := list }}
+
+{{- if .Values.metrics.allowedNamespaces }}
+  {{- $metricsNamespaces = .Values.metrics.allowedNamespaces }}
+{{- else if .Values.metrics.defaultToReleaseNamespace }}
+  {{- $metricsNamespaces = list .Release.Namespace }}
+{{- else }}
+  {{- fail "metrics.allowedNamespaces must be set OR defaultToReleaseNamespace=true" }}
+{{- end }}
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vpa-chart.fullname" . }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "vpa-chart.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+
+    {{- if .Values.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+            matchNames:
+              {{- range $metricsNamespaces }}
+              - {{ . }}
+              {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.controller.ports.metrics }}
+    {{- end }}
+
+    {{- if .Values.controller.healthService.enabled }}
+    - from:
+        - namespaceSelector:
+            matchNames:
+              {{- if eq .Values.health.exposure "same-namespace" }}
+              - {{ .Release.Namespace }}
+              {{- else if eq .Values.health.exposure "kube-system" }}
+              - kube-system
+              {{- else }}
+              {{- range .Values.health.allowedNamespaces }}
+              - {{ . }}
+              {{- end }}
+              {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.controller.ports.health }}
+    {{- end }}
+
+{{- end }}

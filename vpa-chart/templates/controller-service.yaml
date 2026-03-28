@@ -1,0 +1,28 @@
+{{- if .Values.controller.healthService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vpa-chart.fullname" . }}-controller
+  labels:
+    app.kubernetes.io/name: {{ include "vpa-chart.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: {{ include "vpa-chart.name" . }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.controller.service.type }}
+  {{- if .Values.controller.service.sessionAffinity }}
+  sessionAffinity: {{ .Values.controller.service.sessionAffinity }}
+  {{- end }}
+  {{- if .Values.controller.service.internalTrafficPolicy }}
+  internalTrafficPolicy: {{ .Values.controller.service.internalTrafficPolicy }}
+  {{- end }}
+  selector:
+    {{- include "vpa-chart.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: health
+      protocol: TCP
+      port: {{ .Values.controller.ports.health }}
+      targetPort: {{ .Values.controller.ports.health }}
+{{- end }}

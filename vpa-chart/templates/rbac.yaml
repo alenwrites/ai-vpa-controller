@@ -1,0 +1,167 @@
+# ============================================================
+# ServiceAccount
+# Namespace-scoped identity for the controller.
+# ============================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-vpa-controller
+  namespace: {{ .Release.Namespace }}
+---
+# ============================================================
+# Role: ai-vpa-controller
+#
+# Namespace-scoped RBAC for a VPA-like controller.
+# No cluster-wide permissions.
+#
+# SECURITY GUARANTEES:
+# - The controller never modifies:
+#   * spec.replicas
+#   * container images
+#   * environment variables
+#   * volumes or volume mounts
+# - Only container resource requests/limits are reconciled.
+# ============================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-vpa-controller
+  namespace: {{ .Release.Namespace }}
+rules:
+  # ----------------------------------------------------------
+  # Workload metadata access (read-only)
+  #
+  # Required for reconciliation loops.
+  # Exposes only Deployment/StatefulSet metadata and specs.
+  # Namespace-scoped; no pod, secret, node, or log access.
+  # ----------------------------------------------------------
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+
+  # ----------------------------------------------------------
+  # Workload mutation (resource tuning only)
+  #
+  # patch  : primary mechanism (minimal mutation surface)
+  # update : fallback when patch cannot be safely applied
+  #
+  # Field-level safeguards prevent modification of replicas,
+  # images, env vars, volumes, or mounts.
+  # ----------------------------------------------------------
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - patch
+      - update
+
+  # ----------------------------------------------------------
+  # Pod Access (REQUIRED FOR ZERO-DOWNTIME IN-PLACE)
+  #
+  # Allows the controller to list pods to find "OwnerReferences"
+  # and patch pods directly for In-Place resource updates.
+  # ----------------------------------------------------------
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+
+  # ----------------------------------------------------------
+  # Leader election (required)
+  #
+  # Uses namespace-scoped Leases to ensure a single active
+  # controller instance.
+  # ----------------------------------------------------------
+  - apiGroups: ["coordination.k8s.io"]
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+
+  {{- if .Values.events.enabled }}
+  # ----------------------------------------------------------
+  # Kubernetes Events (OPTIONAL, Helm-gated)
+  #
+  # Enabled by default for operational visibility.
+  # Write-only, namespace-scoped, non-sensitive.
+  #
+  # When disabled, the controller runs fully functional
+  # without emitting Kubernetes Events.
+  # ----------------------------------------------------------
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  {{- end }}
+---
+# ============================================================
+# RoleBinding
+# Binds the ServiceAccount to the Role above.
+# ============================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-vpa-controller
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: ai-vpa-controller
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ai-vpa-controller
+
+
+---
+# ============================================================
+# Deployment: ai-vpa-controller
+# This is the "Workload" that actually runs your Python code.
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-vpa-controller
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-vpa-controller
+  template:
+    metadata:
+      labels:
+        app: ai-vpa-controller
+    spec:
+      serviceAccountName: ai-vpa-controller  # This links it to your RBAC!
+      containers:
+        - name: controller
+          image: your-controller-image:latest # Replace with your actual image name
+          env:
+            # THIS IS THE DOWNWARD API (Point #3 Solved)
+            # It injects the unique Pod Name so Leader Election works.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Recommended: Add the namespace too
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace

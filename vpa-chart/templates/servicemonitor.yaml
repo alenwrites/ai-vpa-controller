@@ -1,0 +1,46 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+
+{{- required "metrics.path must be set" .Values.metrics.path }}
+
+{{- /* Namespace selector validation */}}
+{{- $sel := .Values.metrics.serviceMonitor.serviceNamespaceSelector }}
+
+{{- if and (not $sel.matchReleaseNamespace) (empty $sel.matchNames) }}
+{{- fail "serviceNamespaceSelector must define matchReleaseNamespace=true OR non-empty matchNames" }}
+{{- end }}
+
+# NOTE:
+# ServiceMonitor namespace must be within the Prometheus Operator watch scope.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "vpa-chart.fullname" . }}
+  namespace: {{ default .Release.Namespace .Values.metrics.serviceMonitor.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "vpa-chart.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- with .Values.metrics.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+
+  namespaceSelector:
+    matchNames:
+      {{- if $sel.matchReleaseNamespace }}
+        - {{ .Release.Namespace }}
+      {{- else }}
+        {{- range $sel.matchNames }}
+        - {{ . }}
+        {{- end }}
+      {{- end }}
+
+  endpoints:
+    - port: metrics
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+
+{{- end }}

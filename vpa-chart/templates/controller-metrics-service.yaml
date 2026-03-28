@@ -1,0 +1,47 @@
+{{- if .Values.metrics.enabled }}
+
+{{- required "metrics.path must be set" .Values.metrics.path }}
+
+{{- /* Double scraping prevention */}}
+{{- if and .Values.metrics.serviceMonitor.enabled (hasKey .Values.metrics.service.annotations "prometheus.io/scrape") }}
+{{- fail "Do not combine ServiceMonitor.enabled=true with prometheus.io/scrape annotations" }}
+{{- end }}
+
+{{- /* secureMode enforcement */}}
+{{- if .Values.metrics.secureMode }}
+  {{- if not (or .Values.metrics.serviceMonitor.enabled (hasKey .Values.metrics.service.annotations "prometheus.io/scrape")) }}
+  {{- fail "secureMode=true requires ServiceMonitor.enabled=true OR explicit scrape annotations" }}
+  {{- end }}
+{{- end }}
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vpa-chart.fullname" . }}-metrics
+  labels:
+    app.kubernetes.io/name: {{ include "vpa-chart.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: metrics
+  {{- if and (not .Values.metrics.serviceMonitor.enabled) (not .Values.metrics.secureMode) }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ .Values.controller.ports.metrics }}"
+    prometheus.io/path: "{{ .Values.metrics.path }}"
+    {{- with .Values.metrics.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- else if .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml .Values.metrics.service.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.metrics.service.type }}
+  selector:
+    {{- include "vpa-chart.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: {{ .Values.controller.ports.metrics }}
+      targetPort: {{ .Values.controller.ports.metrics }}
+
+{{- end }}
